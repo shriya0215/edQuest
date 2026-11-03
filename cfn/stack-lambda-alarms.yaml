@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Lambda Functions + CloudWatch Alarms (depends on stack-core)"
+
+Parameters:
+  EnvName: {Type: String, Default: sec-runbook}
+
+Resources:
+
+  AlertingFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvName}-alerting"
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !ImportValue {Name: !Sub "${EnvName}-LambdaRoleArn"}
+      Timeout: 30
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !ImportValue {Name: !Sub "${EnvName}-AlertTopicArn"}
+          ENVIRONMENT: !Ref EnvName
+      Code:
+        ZipFile: |
+          import json, os, boto3
+          def lambda_handler(event, ctx):
+              boto3.client('sns').publish(
+                  TopicArn=os.environ['SNS_TOPIC_ARN'],
+                  Subject='[ALERT] Suspicious API Call',
+                  Message=json.dumps(event, indent=2))
+              return {'statusCode': 200}
+
+  Playbook1Fn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvName}-pb1-public-bucket"
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !ImportValue {Name: !Sub "${EnvName}-LambdaRoleArn"}
+      Timeout: 60
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !ImportValue {Name: !Sub "${EnvName}-AlertTopicArn"}
+          ENVIRONMENT: !Ref EnvName
+      Code:
+        ZipFile: |
+          def lambda_handler(event, ctx):
+              return {'statusCode': 200, 'body': 'Deploy from source.'}
+
+  Playbook2Fn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${EnvName}-pb2-security-group"
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !ImportValue {Name: !Sub "${EnvName}-LambdaRoleArn"}
+      Timeout: 60
+      Environment:
+        Variables:
+          SNS_TOPIC_ARN: !ImportValue {Name: !Sub "${EnvName}-AlertTopicArn"}
+          ENVIRONMENT: !Ref EnvName
+      Code:
+        ZipFile: |
+          def lambda_handler(event, ctx):
+              return {'statusCode': 200, 'body': 'Deploy from source.'}
+
+  S3Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:            !Sub "${EnvName}-s3-public-exposure"
+      AlarmDescription:     S3 ACL/policy changed to public
+      MetricName:           S3PublicExposureEvents
+      Namespace:            !Sub "${EnvName}/SecurityEvents"
+      Statistic:            Sum
+      Period:               300
+      EvaluationPeriods:    1
+      Threshold:            1
+      ComparisonOperator:   GreaterThanOrEqualToThreshold
+      TreatMissingData:     notBreaching
+      AlarmActions:         [!ImportValue {Name: !Sub "${EnvName}-AlertTopicArn"}]
+
+  SGAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName:            !Sub "${EnvName}-sg-open-ingress"
+      AlarmDescription:     Security group opened to 0.0.0.0/0
+      MetricName:           PermissiveSGEvents
+      Namespace:            !Sub "${EnvName}/SecurityEvents"
+      Statistic:            Sum
+      Period:               300
+      EvaluationPeriods:    1
+      Threshold:            1
+      ComparisonOperator:   GreaterThanOrEqualToThreshold
+      TreatMissingData:     notBreaching
+      AlarmActions:         [!ImportValue {Name: !Sub "${EnvName}-AlertTopicArn"}]
+
+Outputs:
+  Playbook1Arn: {Value: !GetAtt Playbook1Fn.Arn}
+  Playbook2Arn: {Value: !GetAtt Playbook2Fn.Arn}

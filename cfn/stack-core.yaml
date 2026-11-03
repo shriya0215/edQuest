@@ -1,0 +1,57 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Core: SNS, Vulnerable Bucket, IAM Role for Lambda"
+
+Parameters:
+  AlertEmail: {Type: String}
+  EnvName:    {Type: String, Default: sec-runbook}
+
+Resources:
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${EnvName}-alerts"
+      KmsMasterKeyId: alias/aws/sns
+
+  EmailSub:
+    Type: AWS::SNS::Subscription
+    Properties: {TopicArn: !Ref AlertTopic, Protocol: email, Endpoint: !Ref AlertEmail}
+
+  # Simulated misconfigured bucket (no BlockPublicAccess = vulnerable resource)
+  VulnerableBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${EnvName}-simulated-leak-${AWS::AccountId}"
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${EnvName}-lambda-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - {Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: RemediationPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Resource: "*"
+                Action:
+                  - s3:GetBucketPublicAccessBlock
+                  - s3:PutBucketPublicAccessBlock
+                  - s3:GetBucketAcl
+                  - s3:PutBucketAcl
+                  - s3:GetBucketPolicy
+                  - s3:DeleteBucketPolicy
+                  - s3:ListAllMyBuckets
+                  - ec2:DescribeSecurityGroups
+                  - ec2:RevokeSecurityGroupIngress
+                  - sns:Publish
+
+Outputs:
+  AlertTopicArn:    {Value: !Ref AlertTopic, Export: {Name: !Sub "${EnvName}-AlertTopicArn"}}
+  LambdaRoleArn:    {Value: !GetAtt LambdaRole.Arn, Export: {Name: !Sub "${EnvName}-LambdaRoleArn"}}
+  VulnerableBucket: {Value: !Ref VulnerableBucket}
